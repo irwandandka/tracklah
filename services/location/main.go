@@ -1,15 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
 	"os"
 
 	amqp "github.com/rabbitmq/amqp091-go"
+	"github.com/redis/go-redis/v9"
 )
 
-const locationExchange = "location.events"
+const (
+	locationExchange = "location.events"
+	redisChannel     = "location-updates"
+)
 
 type LocationPing struct {
 	DriverID string  `json:"driverId"`
@@ -50,7 +55,13 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 // is the point where RabbitMQ's Topic exchange earns its keep over Direct:
 // one queue can receive events from every driver without declaring a
 // queue per driver.
-func consumeLocationEvents(ch *amqp.Channel) {
+//
+// Every ping that comes through RabbitMQ is also republished to Redis.
+// RabbitMQ is what got the ping reliably from the driver to THIS
+// instance; Redis is what would let this instance hand it off to
+// whichever instance is actually holding the relevant WebSocket
+// connection, if this service were scaled to multiple replicas.
+func consumeLocationEvents(ch *amqp.Channel, rdb *redis.Client) {
 	if err := ch.ExchangeDeclare(locationExchange, "topic", true, false, false, false, nil); err != nil {
 		log.Fatalf("failed to declare location exchange: %v", err)
 	}
@@ -74,6 +85,8 @@ func consumeLocationEvents(ch *amqp.Channel) {
 
 	log.Printf("location service: listening for location pings on queue %q", q.Name)
 
+	ctx := context.Background()
+
 	for msg := range msgs {
 		var ping LocationPing
 		if err := json.Unmarshal(msg.Body, &ping); err != nil {
@@ -83,6 +96,15 @@ func consumeLocationEvents(ch *amqp.Channel) {
 		}
 
 		log.Printf("location ping (RabbitMQ): driverId=%s lat=%f lng=%f", ping.DriverID, ping.Lat, ping.Lng)
+
+		if err := rdb.Publish(ctx, redisChannel, msg.Body).Err(); err != nil {
+			// Redis pub/sub has no delivery guarantee, so a publish error
+			// here just means "nobody heard this one" - it's not a reason
+			// to Nack the RabbitMQ message, since the ping was already
+			// handled successfully as far as RabbitMQ is concerned.
+			log.Printf("location service: failed to publish to redis: %v", err)
+		}
+
 		msg.Ack(false)
 	}
 }
@@ -98,6 +120,11 @@ func main() {
 		log.Fatal("missing required env var RABBITMQ_URL")
 	}
 
+	redisAddr := os.Getenv("REDIS_ADDR")
+	if redisAddr == "" {
+		log.Fatal("missing required env var REDIS_ADDR")
+	}
+
 	conn, err := amqp.Dial(rabbitURL)
 	if err != nil {
 		log.Fatalf("failed to connect to RabbitMQ: %v", err)
@@ -110,7 +137,10 @@ func main() {
 	}
 	defer ch.Close()
 
-	go consumeLocationEvents(ch)
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	defer rdb.Close()
+
+	go consumeLocationEvents(ch, rdb)
 
 	http.HandleFunc("/ping", pingHandler)
 	http.HandleFunc("/health", healthHandler)
