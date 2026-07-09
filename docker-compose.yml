@@ -79,6 +79,14 @@ services:
       DRIVER_ID: driver-99
       RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
 
+  trip-events-consumer:
+    build: ./services/trip-events-consumer
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+    environment:
+      RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
+
 volumes:
   postgres-data:
   rabbitmq-data:

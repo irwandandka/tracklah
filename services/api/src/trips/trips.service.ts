@@ -4,17 +4,21 @@ import { Repository } from 'typeorm';
 import { Trip } from './trip.entity';
 import { CreateTripDto } from './dto/create-trip.dto';
 import { UpdateTripStatusDto } from './dto/update-trip-status.dto';
+import { TripEventsService } from './trip-events.service';
 
 @Injectable()
 export class TripsService {
   constructor(
     @InjectRepository(Trip)
     private readonly tripsRepository: Repository<Trip>,
+    private readonly tripEvents: TripEventsService,
   ) {}
 
-  create(dto: CreateTripDto): Promise<Trip> {
+  async create(dto: CreateTripDto): Promise<Trip> {
     const trip = this.tripsRepository.create(dto);
-    return this.tripsRepository.save(trip);
+    const saved = await this.tripsRepository.save(trip);
+    this.tripEvents.publish(saved);
+    return saved;
   }
 
   findAll(): Promise<Trip[]> {
@@ -35,6 +39,8 @@ export class TripsService {
     if (dto.driverId) {
       trip.driverId = dto.driverId;
     }
-    return this.tripsRepository.save(trip);
+    const saved = await this.tripsRepository.save(trip);
+    this.tripEvents.publish(saved);
+    return saved;
   }
 }
