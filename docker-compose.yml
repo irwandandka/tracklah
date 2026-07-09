@@ -31,6 +31,7 @@ services:
     restart: unless-stopped
     depends_on:
       - postgres
+      - rabbitmq
     environment:
       PORT: 3000
       DB_HOST: postgres
@@ -38,10 +39,23 @@ services:
       DB_USER: tracklah
       DB_PASSWORD: tracklah
       DB_NAME: tracklah
+      RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api.rule=Host(`api.tracklah.localhost`)"
       - "traefik.http.services.api.loadbalancer.server.port=3000"
+
+  rabbitmq:
+    image: rabbitmq:4.3-management
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: tracklah
+      RABBITMQ_DEFAULT_PASS: tracklah
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
 
   location:
     build: ./services/location
@@ -53,5 +67,15 @@ services:
       - "traefik.http.routers.location.rule=Host(`location.tracklah.localhost`)"
       - "traefik.http.services.location.loadbalancer.server.port=8080"
 
+  driver-simulator:
+    build: ./services/driver-simulator
+    restart: unless-stopped
+    depends_on:
+      - rabbitmq
+    environment:
+      DRIVER_ID: driver-99
+      RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
+
 volumes:
   postgres-data:
+  rabbitmq-data:
