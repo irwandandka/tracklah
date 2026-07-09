@@ -60,8 +60,11 @@ services:
   location:
     build: ./services/location
     restart: unless-stopped
+    depends_on:
+      - rabbitmq
     environment:
       PORT: 8080
+      RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.location.rule=Host(`location.tracklah.localhost`)"
