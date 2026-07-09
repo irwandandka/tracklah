@@ -43,5 +43,15 @@ services:
       - "traefik.http.routers.api.rule=Host(`api.tracklah.localhost`)"
       - "traefik.http.services.api.loadbalancer.server.port=3000"
 
+  location:
+    build: ./services/location
+    restart: unless-stopped
+    environment:
+      PORT: 8080
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.location.rule=Host(`location.tracklah.localhost`)"
+      - "traefik.http.services.location.loadbalancer.server.port=8080"
+
 volumes:
   postgres-data:
