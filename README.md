@@ -55,7 +55,7 @@ Each arrow is a deliberately different messaging pattern — see `documentation/
 
 ```
 tracklah/
-├── docker-compose.yml            # the whole local stack (9 containers)
+├── docker-compose.yml            # the whole local stack (10 containers)
 ├── .env.example                  # FIRESTORE_CREDENTIALS_PATH, FIRESTORE_PROJECT_ID
 └── services/
     ├── api/                      # NestJS core API
@@ -71,6 +71,7 @@ tracklah/
     ├── driver-simulator/         # Go: fake driver - publishes pings, consumes commands
     ├── trip-events-consumer/     # Go: 3 goroutines proving RabbitMQ fanout (Case 3)
     ├── jenkins/                  # Custom jenkins/jenkins:lts image + Configuration-as-Code
+    ├── jenkins-agent/            # Permanent inbound Build Agent (jenkins/inbound-agent + Go)
     └── edge/                     # 🔜 Rust/WASM, not started
 ```
 
@@ -106,7 +107,9 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-This brings up nine containers: `traefik`, `postgres`, `rabbitmq`, `redis`, `api`, `location`, `driver-simulator`, `trip-events-consumer`, `jenkins`. First boot creates the `trips` table automatically (TypeORM `synchronize: true` — fine for this learning phase, would need real migrations before anything resembling production).
+This brings up ten containers: `traefik`, `postgres`, `rabbitmq`, `redis`, `api`, `location`, `driver-simulator`, `trip-events-consumer`, `jenkins`, `jenkins-agent`. First boot creates the `trips` table automatically (TypeORM `synchronize: true` — fine for this learning phase, would need real migrations before anything resembling production).
+
+Note: `jenkins-agent` needs a connection secret Jenkins only generates after the controller's first boot - see `.env.example` for the one-time `curl` command to fetch it into your `.env` before that container will connect successfully.
 
 Try it:
 
@@ -151,7 +154,7 @@ Full rationale and tool-by-tool notes live in the project brainstorm doc (not ch
 
 - **Phase 1 — Foundation** ✅ done: Docker Compose, Traefik, NestJS CRUD, Postgres, all wired end-to-end.
 - **Phase 2 — Real-time core** ✅ done: Go location ingestion, RabbitMQ (direct/topic/fanout — commands, location pings, trip lifecycle events), Redis pub/sub bridging Go → NestJS, Firestore last-known-location writes.
-- **Phase 3 — CI/CD** 🚧 in progress: Jenkins controller ✅ (Docker + Configuration-as-Code, seeded pipeline building `location` on every push). Still to do: separate Build Agent (controller shouldn't build itself long-term), Docker build/push to a registry, SSH deploy.
+- **Phase 3 — CI/CD** 🚧 in progress: Jenkins controller ✅, Build Agent ✅ (`services/jenkins-agent`, permanent inbound node — `location-build` actually compiles on the agent, not the controller). Still to do: Docker build/push to a registry, SSH deploy.
 - **Phase 4 — Observability**: Prometheus/Grafana, OpenTelemetry tracing across services.
 - **Phase 5 — Storage & cloud**: MinIO, Cloudflare Tunnel + R2, AWS SES/S3, the Rust/WASM edge worker.
 - **Phase 6 — Advanced**: RabbitMQ DLQ + MQTT, Kafka (replacing RabbitMQ for location ingestion), Firebase Auth, Sentry.
