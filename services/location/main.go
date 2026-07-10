@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"time"
 
+	"cloud.google.com/go/firestore"
 	amqp "github.com/rabbitmq/amqp091-go"
 	"github.com/redis/go-redis/v9"
 )
@@ -61,7 +63,11 @@ func healthHandler(w http.ResponseWriter, r *http.Request) {
 // instance; Redis is what would let this instance hand it off to
 // whichever instance is actually holding the relevant WebSocket
 // connection, if this service were scaled to multiple replicas.
-func consumeLocationEvents(ch *amqp.Channel, rdb *redis.Client) {
+//
+// It's also written to Firestore, keyed by driverId, so the document
+// always holds each driver's CURRENT position - a "last known location"
+// read model that survives restarts, unlike the Redis broadcast.
+func consumeLocationEvents(ch *amqp.Channel, rdb *redis.Client, fs *firestore.Client) {
 	if err := ch.ExchangeDeclare(locationExchange, "topic", true, false, false, false, nil); err != nil {
 		log.Fatalf("failed to declare location exchange: %v", err)
 	}
@@ -105,6 +111,18 @@ func consumeLocationEvents(ch *amqp.Channel, rdb *redis.Client) {
 			log.Printf("location service: failed to publish to redis: %v", err)
 		}
 
+		_, err = fs.Collection("driverLocations").Doc(ping.DriverID).Set(ctx, map[string]any{
+			"lat":       ping.Lat,
+			"lng":       ping.Lng,
+			"updatedAt": time.Now().UTC(),
+		})
+		if err != nil {
+			// Same reasoning as the Redis publish above: a Firestore write
+			// failure doesn't invalidate the fact that RabbitMQ already
+			// delivered this ping successfully.
+			log.Printf("location service: failed to write to firestore: %v", err)
+		}
+
 		msg.Ack(false)
 	}
 }
@@ -125,6 +143,13 @@ func main() {
 		log.Fatal("missing required env var REDIS_ADDR")
 	}
 
+	firestoreProjectID := os.Getenv("FIRESTORE_PROJECT_ID")
+	if firestoreProjectID == "" {
+		log.Fatal("missing required env var FIRESTORE_PROJECT_ID")
+	}
+
+	ctx := context.Background()
+
 	conn, err := amqp.Dial(rabbitURL)
 	if err != nil {
 		log.Fatalf("failed to connect to RabbitMQ: %v", err)
@@ -140,7 +165,16 @@ func main() {
 	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
 	defer rdb.Close()
 
-	go consumeLocationEvents(ch, rdb)
+	// Picks up credentials automatically from the GOOGLE_APPLICATION_CREDENTIALS
+	// env var (the standard Google Cloud SDK convention) - no explicit key
+	// file path passed here.
+	fs, err := firestore.NewClient(ctx, firestoreProjectID)
+	if err != nil {
+		log.Fatalf("failed to create firestore client: %v", err)
+	}
+	defer fs.Close()
+
+	go consumeLocationEvents(ch, rdb, fs)
 
 	http.HandleFunc("/ping", pingHandler)
 	http.HandleFunc("/health", healthHandler)

@@ -77,6 +77,10 @@ services:
       PORT: 8080
       RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
       REDIS_ADDR: redis:6379
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/firebase-adminsdk.json
+      FIRESTORE_PROJECT_ID: ${FIRESTORE_PROJECT_ID}
+    volumes:
+      - ${FIRESTORE_CREDENTIALS_PATH}:/secrets/firebase-adminsdk.json:ro
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.location.rule=Host(`location.tracklah.localhost`)"
