@@ -55,7 +55,7 @@ Each arrow is a deliberately different messaging pattern — see `documentation/
 
 ```
 tracklah/
-├── docker-compose.yml            # the whole local stack (8 containers)
+├── docker-compose.yml            # the whole local stack (9 containers)
 ├── .env.example                  # FIRESTORE_CREDENTIALS_PATH, FIRESTORE_PROJECT_ID
 └── services/
     ├── api/                      # NestJS core API
@@ -70,6 +70,7 @@ tracklah/
     ├── location/                 # Go: consumes RabbitMQ pings, publishes Redis + Firestore
     ├── driver-simulator/         # Go: fake driver - publishes pings, consumes commands
     ├── trip-events-consumer/     # Go: 3 goroutines proving RabbitMQ fanout (Case 3)
+    ├── jenkins/                  # Custom jenkins/jenkins:lts image + Configuration-as-Code
     └── edge/                     # 🔜 Rust/WASM, not started
 ```
 
@@ -105,7 +106,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-This brings up eight containers: `traefik`, `postgres`, `rabbitmq`, `redis`, `api`, `location`, `driver-simulator`, `trip-events-consumer`. First boot creates the `trips` table automatically (TypeORM `synchronize: true` — fine for this learning phase, would need real migrations before anything resembling production).
+This brings up nine containers: `traefik`, `postgres`, `rabbitmq`, `redis`, `api`, `location`, `driver-simulator`, `trip-events-consumer`, `jenkins`. First boot creates the `trips` table automatically (TypeORM `synchronize: true` — fine for this learning phase, would need real migrations before anything resembling production).
 
 Try it:
 
@@ -122,6 +123,7 @@ curl http://api.tracklah.localhost:8000/trips
 Other useful dashboards:
 - Traefik (routers, discovered services): `http://localhost:8080`
 - RabbitMQ management UI: `http://localhost:15672` (login `tracklah` / `tracklah`)
+- Jenkins: `http://jenkins.tracklah.localhost:8000` (login from `JENKINS_ADMIN_USER`/`JENKINS_ADMIN_PASSWORD` in your `.env`) — a `location-build` pipeline job is seeded automatically via Configuration-as-Code (`services/jenkins/casc.yaml`), no setup wizard.
 
 ### Running the API outside Docker (faster iteration)
 
@@ -149,7 +151,7 @@ Full rationale and tool-by-tool notes live in the project brainstorm doc (not ch
 
 - **Phase 1 — Foundation** ✅ done: Docker Compose, Traefik, NestJS CRUD, Postgres, all wired end-to-end.
 - **Phase 2 — Real-time core** ✅ done: Go location ingestion, RabbitMQ (direct/topic/fanout — commands, location pings, trip lifecycle events), Redis pub/sub bridging Go → NestJS, Firestore last-known-location writes.
-- **Phase 3 — CI/CD**: Jenkins controller + build agent, Docker build/push, SSH deploy.
+- **Phase 3 — CI/CD** 🚧 in progress: Jenkins controller ✅ (Docker + Configuration-as-Code, seeded pipeline building `location` on every push). Still to do: separate Build Agent (controller shouldn't build itself long-term), Docker build/push to a registry, SSH deploy.
 - **Phase 4 — Observability**: Prometheus/Grafana, OpenTelemetry tracing across services.
 - **Phase 5 — Storage & cloud**: MinIO, Cloudflare Tunnel + R2, AWS SES/S3, the Rust/WASM edge worker.
 - **Phase 6 — Advanced**: RabbitMQ DLQ + MQTT, Kafka (replacing RabbitMQ for location ingestion), Firebase Auth, Sentry.
