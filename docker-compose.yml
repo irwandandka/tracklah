@@ -117,6 +117,18 @@ services:
       - "traefik.http.routers.jenkins.rule=Host(`jenkins.tracklah.localhost`)"
       - "traefik.http.services.jenkins.loadbalancer.server.port=8080"
 
+  jenkins-agent:
+    build: ./services/jenkins-agent
+    restart: unless-stopped
+    depends_on:
+      - jenkins
+    environment:
+      JENKINS_URL: http://jenkins:8080/
+      JENKINS_AGENT_NAME: build-agent
+      JENKINS_AGENT_WORKDIR: /home/jenkins/agent
+      JENKINS_WEB_SOCKET: "true"
+      JENKINS_SECRET: ${JENKINS_AGENT_SECRET}
+
 volumes:
   postgres-data:
   rabbitmq-data:

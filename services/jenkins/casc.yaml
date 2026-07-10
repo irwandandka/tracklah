@@ -10,6 +10,14 @@ jenkins:
   authorizationStrategy:
     loggedInUsersCanDoAnything:
       allowAnonymousRead: false
+  nodes:
+    - permanent:
+        name: "build-agent"
+        numExecutors: 2
+        remoteFS: "/home/jenkins/agent"
+        labelString: "build-agent"
+        launcher: "inbound"
+        retentionStrategy: "always"
 
 jobs:
   - script: >
