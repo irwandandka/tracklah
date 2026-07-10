@@ -1,0 +1,30 @@
+jenkins:
+  systemMessage: "TrackLah Jenkins (local, learning project)"
+  numExecutors: 2
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "${JENKINS_ADMIN_USER}"
+          password: "${JENKINS_ADMIN_PASSWORD}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+jobs:
+  - script: >
+      pipelineJob('location-build') {
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote {
+                  url('https://github.com/irwandandka/tracklah.git')
+                }
+                branch('*/main')
+              }
+            }
+            scriptPath('services/location/Jenkinsfile')
+          }
+        }
+      }

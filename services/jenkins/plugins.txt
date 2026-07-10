@@ -1,0 +1,7 @@
+git:latest
+workflow-aggregator:latest
+configuration-as-code:latest
+job-dsl:latest
+docker-workflow:latest
+ssh-agent:latest
+credentials-binding:latest

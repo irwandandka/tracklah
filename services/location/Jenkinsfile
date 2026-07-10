@@ -1,0 +1,20 @@
+pipeline {
+    agent any
+
+    stages {
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Build Go') {
+            steps {
+                dir('services/location') {
+                    sh 'go version'
+                    sh 'go build -o /tmp/location-ci .'
+                }
+            }
+        }
+    }
+}

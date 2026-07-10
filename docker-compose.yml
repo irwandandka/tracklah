@@ -103,7 +103,22 @@ services:
     environment:
       RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
 
+  jenkins:
+    build: ./services/jenkins
+    restart: unless-stopped
+    environment:
+      JENKINS_ADMIN_USER: ${JENKINS_ADMIN_USER}
+      JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD}
+    volumes:
+      - jenkins-data:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.jenkins.rule=Host(`jenkins.tracklah.localhost`)"
+      - "traefik.http.services.jenkins.loadbalancer.server.port=8080"
+
 volumes:
   postgres-data:
   rabbitmq-data:
   redis-data:
+  jenkins-data:
