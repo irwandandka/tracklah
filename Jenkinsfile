@@ -17,6 +17,13 @@ pipeline {
         }
         stage('Go services') {
             agent { docker { image 'golang:1.23'; reuseNode true } }
+            environment {
+                // The docker agent runs as uid 1000 (not root), which
+                // can't write to the image's default /.cache or /go -
+                // point Go's caches at the writable workspace instead.
+                GOCACHE = "${WORKSPACE}/.gocache"
+                GOPATH = "${WORKSPACE}/.gopath"
+            }
             steps {
                 dir('services/location') {
                     sh 'go build ./...'
