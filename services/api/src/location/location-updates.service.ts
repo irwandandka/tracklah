@@ -23,7 +23,8 @@ export class LocationUpdatesService implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     const addr = this.config.getOrThrow<string>('REDIS_ADDR');
     const [host, port] = addr.split(':');
-    this.subscriber = new Redis({ host, port: Number(port) });
+    const password = this.config.get<string>('REDIS_PASSWORD');
+    this.subscriber = new Redis({ host, port: Number(port), password });
 
     await this.subscriber.subscribe(CHANNEL);
     this.logger.log(`Subscribed to Redis channel "${CHANNEL}"`);

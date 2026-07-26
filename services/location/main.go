@@ -142,6 +142,7 @@ func main() {
 	if redisAddr == "" {
 		log.Fatal("missing required env var REDIS_ADDR")
 	}
+	redisPassword := os.Getenv("REDIS_PASSWORD") // optional - empty means no auth
 
 	firestoreProjectID := os.Getenv("FIRESTORE_PROJECT_ID")
 	if firestoreProjectID == "" {
@@ -162,7 +163,7 @@ func main() {
 	}
 	defer ch.Close()
 
-	rdb := redis.NewClient(&redis.Options{Addr: redisAddr})
+	rdb := redis.NewClient(&redis.Options{Addr: redisAddr, Password: redisPassword})
 	defer rdb.Close()
 
 	// Picks up credentials automatically from the GOOGLE_APPLICATION_CREDENTIALS
