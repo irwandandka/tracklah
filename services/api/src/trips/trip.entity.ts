@@ -6,7 +6,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
-import { TripStatus } from './trip-status.enum';
+import { CancelReason, TripStatus } from './trip-status.enum';
 
 @Entity('trips')
 // Backs GET /trips?riderId=... ordered by createdAt DESC.
@@ -32,6 +32,10 @@ export class Trip {
 
   @Column({ type: 'enum', enum: TripStatus, default: TripStatus.REQUESTED })
   status: TripStatus;
+
+  // Only set when status is "cancelled".
+  @Column({ type: 'enum', enum: CancelReason, nullable: true })
+  cancelReason: CancelReason | null;
 
   @Column('double precision')
   originLat: number;

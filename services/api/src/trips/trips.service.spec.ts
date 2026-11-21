@@ -3,7 +3,8 @@ import { QueryFailedError, Repository } from 'typeorm';
 import { TripsService } from './trips.service';
 import { TripEventsService } from './trip-events.service';
 import { Trip } from './trip.entity';
-import { TripStatus } from './trip-status.enum';
+import { ConfigService } from '@nestjs/config';
+import { CancelReason, TripStatus } from './trip-status.enum';
 
 const TRIP_ID = '11111111-1111-4111-8111-111111111111';
 const RIDER_ID = '22222222-2222-4222-8222-222222222222';
@@ -14,6 +15,7 @@ function makeTrip(overrides: Partial<Trip> = {}): Trip {
     riderId: RIDER_ID,
     driverId: null,
     status: TripStatus.REQUESTED,
+    cancelReason: null,
     originLat: -6.2,
     originLng: 106.8,
     destinationLat: -6.21,
@@ -26,8 +28,12 @@ function makeTrip(overrides: Partial<Trip> = {}): Trip {
 
 describe('TripsService', () => {
   let repo: jest.Mocked<
-    Pick<Repository<Trip>, 'create' | 'save' | 'find' | 'findOneBy' | 'update'>
+    Pick<
+      Repository<Trip>,
+      'create' | 'save' | 'find' | 'findOneBy' | 'update' | 'createQueryBuilder'
+    >
   >;
+  let qb: Record<string, jest.Mock>;
   let events: { publish: jest.Mock };
   let service: TripsService;
 
@@ -38,11 +44,19 @@ describe('TripsService', () => {
       find: jest.fn(),
       findOneBy: jest.fn(),
       update: jest.fn(),
+      createQueryBuilder: jest.fn(),
     };
+    qb = {};
+    for (const m of ['update', 'set', 'where', 'andWhere', 'returning']) {
+      qb[m] = jest.fn(() => qb);
+    }
+    qb.execute = jest.fn();
+    repo.createQueryBuilder.mockReturnValue(qb as never);
     events = { publish: jest.fn() };
     service = new TripsService(
       repo as unknown as Repository<Trip>,
       events as unknown as TripEventsService,
+      new ConfigService({}),
     );
   });
 
@@ -147,6 +161,84 @@ describe('TripsService', () => {
       await expect(
         service.updateStatus(TRIP_ID, { status: TripStatus.CANCELLED }),
       ).rejects.toBeInstanceOf(ConflictException);
+      expect(events.publish).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('rider cancel', () => {
+    it('records rider_cancelled as the reason', async () => {
+      repo.findOneBy.mockResolvedValue(makeTrip());
+      repo.update.mockResolvedValue({
+        affected: 1,
+        raw: [],
+        generatedMaps: [],
+      });
+      await service.updateStatus(TRIP_ID, { status: TripStatus.CANCELLED });
+      expect(repo.update).toHaveBeenCalledWith(
+        { id: TRIP_ID, status: TripStatus.REQUESTED },
+        {
+          status: TripStatus.CANCELLED,
+          cancelReason: CancelReason.RIDER_CANCELLED,
+        },
+      );
+    });
+  });
+
+  describe('expireStaleRequests', () => {
+    it('cancels stale requested trips as no_driver_found and publishes each', async () => {
+      const a = makeTrip({
+        id: 'a',
+        status: TripStatus.CANCELLED,
+        cancelReason: CancelReason.NO_DRIVER_FOUND,
+      });
+      const b = makeTrip({ ...a, id: 'b' });
+      qb.execute.mockResolvedValue({ raw: [a, b] });
+
+      await expect(service.expireStaleRequests()).resolves.toBe(2);
+      expect(qb.set).toHaveBeenCalledWith({
+        status: TripStatus.CANCELLED,
+        cancelReason: CancelReason.NO_DRIVER_FOUND,
+      });
+      expect(qb.where).toHaveBeenCalledWith('status = :status', {
+        status: TripStatus.REQUESTED,
+      });
+      expect(qb.andWhere).toHaveBeenCalledWith(
+        expect.stringContaining('"createdAt" < now()'),
+        { minutes: 30 },
+      );
+      expect(events.publish).toHaveBeenCalledTimes(2);
+    });
+
+    it('uses TRIP_REQUEST_TIMEOUT_MINUTES when set', async () => {
+      const custom = new TripsService(
+        repo as unknown as Repository<Trip>,
+        events as unknown as TripEventsService,
+        new ConfigService({ TRIP_REQUEST_TIMEOUT_MINUTES: '5' }),
+      );
+      qb.execute.mockResolvedValue({ raw: [] });
+      await custom.expireStaleRequests();
+      expect(qb.andWhere).toHaveBeenCalledWith(expect.any(String), {
+        minutes: 5,
+      });
+    });
+
+    it.each(['0', '-5', '1.5', 'abc'])(
+      'rejects TRIP_REQUEST_TIMEOUT_MINUTES=%s at startup',
+      (value) => {
+        expect(
+          () =>
+            new TripsService(
+              repo as unknown as Repository<Trip>,
+              events as unknown as TripEventsService,
+              new ConfigService({ TRIP_REQUEST_TIMEOUT_MINUTES: value }),
+            ),
+        ).toThrow();
+      },
+    );
+
+    it('survives a failed sweep', async () => {
+      qb.execute.mockRejectedValue(new Error('db down'));
+      await expect(service.expireStaleRequests()).resolves.toBe(0);
       expect(events.publish).not.toHaveBeenCalled();
     });
   });

@@ -42,6 +42,9 @@ services:
       DB_NAME: tracklah
       RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
       REDIS_ADDR: redis:6379
+      # A trip still "requested" after this long is cancelled as
+      # no_driver_found (checked once a minute).
+      TRIP_REQUEST_TIMEOUT_MINUTES: 30
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api.rule=Host(`api.tracklah.localhost`)"
