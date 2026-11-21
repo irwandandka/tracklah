@@ -1,0 +1,86 @@
+# Production stack on vm-4 (homelab). Installed at /opt/tracklah and
+# applied by deploy.sh; Jenkins sends this file on every deploy, so edit it
+# here in the repo, not on the server.
+#
+# Postgres, Redis and RabbitMQ are NOT here: they're the homelab's shared
+# infra LXCs (postgres.lan, redis.lan, messaging.lan). Secrets come from
+# /opt/tracklah/.env (mode 600, never committed); the image tag from .tag.
+name: tracklah
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "3" }
+
+services:
+  api:
+    <<: *hardening
+    image: ghcr.io/irwandandka/tracklah-api:${TRACKLAH_TAG:?set by deploy.sh}
+    # Loopback only: the outside world reaches the API through Cloudflare
+    # Tunnel (cloudflared on this host), never directly. That's also what
+    # makes trusting CF-Connecting-IP for rate limiting safe.
+    ports: ["127.0.0.1:3300:3000"]
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DB_HOST: ${DB_HOST:?}
+      DB_PORT: ${DB_PORT:-5432}
+      DB_USER: ${DB_USER:?}
+      DB_PASSWORD: ${DB_PASSWORD:?}
+      DB_NAME: ${DB_NAME:?}
+      RABBITMQ_URL: ${RABBITMQ_URL:?}
+      REDIS_ADDR: ${REDIS_ADDR:?}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      TRIP_REQUEST_TIMEOUT_MINUTES: 30
+      TRUST_CF_CONNECTING_IP: "true"
+      THROTTLE_LIMIT_PER_MINUTE: 120
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  location:
+    <<: *hardening
+    image: ghcr.io/irwandandka/tracklah-location:${TRACKLAH_TAG:?}
+    environment:
+      PORT: 8080
+      RABBITMQ_URL: ${RABBITMQ_URL:?}
+      REDIS_ADDR: ${REDIS_ADDR:?}
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+      FIRESTORE_PROJECT_ID: ${FIRESTORE_PROJECT_ID:?}
+      GOOGLE_APPLICATION_CREDENTIALS: /secrets/firebase-adminsdk.json
+    volumes:
+      - /opt/tracklah/secrets/firebase-adminsdk.json:/secrets/firebase-adminsdk.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+
+  driver-simulator:
+    <<: *hardening
+    image: ghcr.io/irwandandka/tracklah-driver-simulator:${TRACKLAH_TAG:?}
+    depends_on:
+      api: { condition: service_healthy }
+    environment:
+      DRIVER_IDS: driver-1,driver-2,driver-3
+      RABBITMQ_URL: ${RABBITMQ_URL:?}
+      API_URL: http://api:3000
+      IDLE_PING_INTERVAL: 20s
+      TRIP_PING_INTERVAL: 10s
+      SPEED_MPS: "12"
+      ONLINE_DURATION: 20m-40m
+      OFFLINE_DURATION: 10m-30m
+
+  trip-events-consumer:
+    <<: *hardening
+    image: ghcr.io/irwandandka/tracklah-trip-events-consumer:${TRACKLAH_TAG:?}
+    environment:
+      RABBITMQ_URL: ${RABBITMQ_URL:?}
