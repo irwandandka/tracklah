@@ -60,7 +60,7 @@ func loadConfig() (config, error) {
 		return c, fmt.Errorf("missing required env var API_URL")
 	}
 
-	c.pingInterval = 4 * time.Second
+	c.pingInterval = 10 * time.Second
 	if v := os.Getenv("PING_INTERVAL"); v != "" {
 		d, err := time.ParseDuration(v)
 		if err != nil || d <= 0 {

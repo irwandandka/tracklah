@@ -99,8 +99,9 @@ services:
       RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
       API_URL: http://api:3000
       # Every ping becomes one Firestore write in `location`: 3 drivers
-      # at 4s is ~65k writes/day, above the Spark free tier (20k/day).
-      PING_INTERVAL: 4s
+      # at 10s is ~26k writes/day, still a bit above the Spark free tier
+      # (20k/day). 2 drivers at 10s (~17k/day) fits.
+      PING_INTERVAL: 10s
       SPEED_MPS: "12"
 
   trip-events-consumer:

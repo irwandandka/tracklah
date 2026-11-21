@@ -133,11 +133,11 @@ Trip API rules worth knowing:
 - `PATCH /trips/:id/status` only allows `requested→assigned|cancelled`, `assigned→in_progress|cancelled`, `in_progress→completed`. Anything else is `409`. `driverId` is required when assigning and rejected otherwise. The update is a compare-and-set on the previous status, so a concurrent change also loses with `409` instead of being overwritten.
 - Malformed trip ids return `400`, not a Postgres `500`.
 
-`driver-simulator` runs every driver in `DRIVER_IDS` (`driver-1,driver-2,driver-3` by default) in one process. Each one roams in straight lines between random waypoints, pinging every `PING_INTERVAL` (4s) at `SPEED_MPS` (12 m/s). When you create a trip, the next idle driver takes it: `PATCH assigned` with its `driverId`, drives to the origin, `PATCH in_progress`, drives to the destination, `PATCH completed`. If the rider cancels while the driver is on the way, the driver drops the trip and goes back to roaming. Any `409` from the API (trip already taken or cancelled) just means "skip this one". Watch `docker logs -f tracklah-driver-simulator-1` for the trip side and `docker logs -f tracklah-location-1` to see pings flow through RabbitMQ, Redis and into Firestore.
+`driver-simulator` runs every driver in `DRIVER_IDS` (`driver-1,driver-2,driver-3` by default) in one process. Each one roams in straight lines between random waypoints, pinging every `PING_INTERVAL` (10s) at `SPEED_MPS` (12 m/s). When you create a trip, the next idle driver takes it: `PATCH assigned` with its `driverId`, drives to the origin, `PATCH in_progress`, drives to the destination, `PATCH completed`. If the rider cancels while the driver is on the way, the driver drops the trip and goes back to roaming. Any `409` from the API (trip already taken or cancelled) just means "skip this one". Watch `docker logs -f tracklah-driver-simulator-1` for the trip side and `docker logs -f tracklah-location-1` to see pings flow through RabbitMQ, Redis and into Firestore.
 
 Known limitation: if the simulator restarts mid-trip, that trip stays `assigned`/`in_progress` (it isn't resumed). `assigned` can still be cancelled by the rider, but `in_progress` has to be finished by hand: `PATCH /trips/<id>/status` with `{"status":"completed"}`.
 
-Firestore cost: every ping is one Firestore write in `location`. Three drivers at 4s is about 65k writes/day, above the Spark plan's free 20k/day. Raise `PING_INTERVAL` or lower the driver count if that matters.
+Firestore cost: every ping is one Firestore write in `location`. Three drivers at 10s is about 26k writes/day, still a little above the Spark plan's free 20k/day. Two drivers at 10s (about 17k/day) fits.
 
 Other useful dashboards:
 - Traefik (routers, discovered services): `http://localhost:8080`
