@@ -110,7 +110,11 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-This brings up ten containers: `traefik`, `postgres`, `rabbitmq`, `redis`, `api`, `location`, `driver-simulator`, `trip-events-consumer`, `jenkins`, `jenkins-agent`. First boot creates the `trips` table automatically (TypeORM `synchronize: true` — fine for this learning phase, would need real migrations before anything resembling production).
+This brings up ten containers: `traefik`, `postgres`, `rabbitmq`, `redis`, `api`, `location`, `driver-simulator`, `trip-events-consumer`, `jenkins`, `jenkins-agent`. The schema is managed by TypeORM migrations in `services/api/src/database/migrations/`, applied automatically when the API boots (`DB_MIGRATIONS_RUN=false` turns that off). `synchronize` is off everywhere.
+
+Upgrading a local database created before migrations existed (when `synchronize: true` made the tables): the first migration will fail with "already exists". It only holds test trips, so recreate it: `docker compose exec postgres psql -U tracklah -d postgres -c 'DROP DATABASE tracklah WITH (FORCE)' -c 'CREATE DATABASE tracklah OWNER tracklah'`.
+
+Schema changes: edit the entity, then `npm run migration:generate -- src/database/migrations/<Name>` in `services/api` (against an up-to-date database), review the generated SQL, and commit it.
 
 Note: `jenkins-agent` needs a connection secret Jenkins only generates after the controller's first boot - see `.env.example` for the one-time `curl` command to fetch it into your `.env` before that container will connect successfully.
 
@@ -132,6 +136,7 @@ Trip API rules worth knowing:
 - A rider can have only one active trip (`requested`/`assigned`/`in_progress`). A second `POST /trips` gets `409`. This is enforced by a partial unique index (`UQ_trips_rider_active`), not just an app-level check. If an old local database already has duplicate active trips per rider, the API fails to create that index on boot: cancel or delete the extras first.
 - `PATCH /trips/:id/status` only allows `requested→assigned|cancelled`, `assigned→in_progress|cancelled`, `in_progress→completed`. Anything else is `409`. `driverId` is required when assigning and rejected otherwise. The update is a compare-and-set on the previous status, so a concurrent change also loses with `409` instead of being overwritten.
 - Malformed trip ids return `400`, not a Postgres `500`.
+- Rate limits, per client IP: 120 requests/minute overall (`THROTTLE_LIMIT_PER_MINUTE`), 10/minute for `POST /trips`. Over the limit is `429`. Behind Cloudflare Tunnel set `TRUST_CF_CONNECTING_IP=true` so the limit uses the real client IP, and only when the API is reachable through the tunnel alone (otherwise the header can be spoofed).
 - A trip nobody picks up within `TRIP_REQUEST_TIMEOUT_MINUTES` (30) is cancelled automatically by a once-a-minute sweep in `TripsService`. Every cancelled trip carries `cancelReason`: `no_driver_found` for a timeout, `rider_cancelled` for `PATCH .../status` with `cancelled`. The sweep is a single conditional `UPDATE`, so it can't race a driver's assign and is safe with several API replicas.
 
 `driver-simulator` runs every driver in `DRIVER_IDS` (`driver-1,driver-2,driver-3` by default) in one process. Like real drivers, they aren't online 24/7: each one alternates an online shift (`ONLINE_DURATION`, 20–40 min) and an offline break (`OFFLINE_DURATION`, 10–30 min). Offline drivers send no pings at all, so they drop off the app's map (`updatedAt > now-30s`) and take no trips. A shift that ends mid-trip waits until the trip is completed. Set `ALWAYS_ONLINE=true` to switch shifts off while testing.
