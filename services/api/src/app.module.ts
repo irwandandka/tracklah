@@ -6,6 +6,7 @@ import { AppService } from './app.service';
 import { TripsModule } from './trips/trips.module';
 import { CommandsModule } from './commands/commands.module';
 import { LocationModule } from './location/location.module';
+import { HealthModule } from './health/health.module';
 
 @Module({
   imports: [
@@ -26,6 +27,7 @@ import { LocationModule } from './location/location.module';
     TripsModule,
     CommandsModule,
     LocationModule,
+    HealthModule,
   ],
   controllers: [AppController],
   providers: [AppService],

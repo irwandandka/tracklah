@@ -65,7 +65,8 @@ tracklah/
     │   │   ├── trips/                 # trip CRUD + lifecycle (see §4)
     │   │   ├── commands/              # RabbitMQ Case 1: direct exchange, publishes to drivers
     │   │   ├── rabbitmq/              # shared connection/channel, used by commands + trips
-    │   │   └── location/              # Redis subscriber, receives updates from Go
+    │   │   ├── location/              # Redis subscriber, receives updates from Go
+    │   │   └── health/                # GET /health (checks Postgres)
     │   └── test/
     ├── location/                 # Go: consumes RabbitMQ pings, publishes Redis + Firestore
     ├── driver-simulator/         # Go: fake driver - publishes pings, consumes commands
@@ -81,12 +82,12 @@ As the Rust edge service gets added, it'll live as a sibling under `services/`.
 
 If you want to understand how a feature is built here, read `services/api/src/trips/` in this order — it mirrors how a request actually flows through the layers:
 
-1. **`trip-status.enum.ts`** — the trip lifecycle: `requested → assigned → in_progress → completed` (or `cancelled`). This is the vocabulary everything else uses.
+1. **`trip-status.enum.ts`** — the trip lifecycle: `requested → assigned → in_progress → completed` (or `cancelled`). This is the vocabulary everything else uses, plus `ALLOWED_TRANSITIONS`, the state machine `PATCH /trips/:id/status` is checked against.
 2. **`trip.entity.ts`** — the Postgres table via TypeORM decorators: a trip has a rider, an optional driver, a status, origin/destination coordinates, and timestamps.
 3. **`dto/create-trip.dto.ts`** and **`dto/update-trip-status.dto.ts`** — what's accepted over HTTP, validated with `class-validator` (e.g. `@IsLatitude()`) before it ever reaches the service.
 4. **`trips.service.ts`** — the actual logic: create, list, find one (throws `NotFoundException` if missing), update status. Talks to Postgres through TypeORM's `Repository<Trip>`, and calls `TripEventsService.publish()` after every create/update.
 5. **`trip-events.service.ts`** — broadcasts a `trip.lifecycle` fanout event (RabbitMQ Case 3) every time a trip is created or changes status. Doesn't know or care who's listening — see `trip-events-consumer`.
-6. **`trips.controller.ts`** — maps HTTP verbs to service methods: `POST /trips`, `GET /trips`, `GET /trips/:id`, `PATCH /trips/:id/status`.
+6. **`trips.controller.ts`** — maps HTTP verbs to service methods: `POST /trips`, `GET /trips?riderId=`, `GET /trips/:id`, `PATCH /trips/:id/status`.
 7. **`trips.module.ts`** — registers the entity with TypeORM, imports `RabbitmqModule`, wires controller + both services together.
 8. **`app.module.ts`** (one level up) — this is where `TripsModule` gets imported into the app, alongside `ConfigModule` (reads `.env`), `TypeOrmModule.forRootAsync`, `CommandsModule`, and `LocationModule`.
 
@@ -114,12 +115,21 @@ Note: `jenkins-agent` needs a connection secret Jenkins only generates after the
 Try it:
 
 ```bash
+curl http://api.tracklah.localhost:8000/health   # 200 {"status":"ok","db":"up"}, 503 if Postgres is unreachable
+
+RIDER=$(uuidgen | tr A-Z a-z)   # riderId must be a UUID (the mobile app generates one per install)
 curl -X POST http://api.tracklah.localhost:8000/trips \
   -H "Content-Type: application/json" \
-  -d '{"riderId":"rider-1","originLat":-6.2,"originLng":106.8,"destinationLat":-6.21,"destinationLng":106.81}'
+  -d '{"riderId":"'$RIDER'","originLat":-6.2,"originLng":106.8,"destinationLat":-6.21,"destinationLng":106.81}'
 
-curl http://api.tracklah.localhost:8000/trips
+curl "http://api.tracklah.localhost:8000/trips?riderId=$RIDER"
 ```
+
+Trip API rules worth knowing:
+- `GET /trips` requires `riderId` (there's no auth yet, so it never lists everyone's trips). Results are `createdAt DESC`, paginated with `limit` (default 20, max 100) and `offset`, optionally filtered with `status=completed,cancelled`. Response: `{ data, limit, offset, nextOffset }`, where `nextOffset` is `null` on the last page.
+- A rider can have only one active trip (`requested`/`assigned`/`in_progress`). A second `POST /trips` gets `409`. This is enforced by a partial unique index (`UQ_trips_rider_active`), not just an app-level check. If an old local database already has duplicate active trips per rider, the API fails to create that index on boot: cancel or delete the extras first.
+- `PATCH /trips/:id/status` only allows `requested→assigned|cancelled`, `assigned→in_progress|cancelled`, `in_progress→completed`. Anything else is `409`. `driverId` is required when assigning and rejected otherwise. The update is a compare-and-set on the previous status, so a concurrent change also loses with `409` instead of being overwritten.
+- Malformed trip ids return `400`, not a Postgres `500`.
 
 `driver-simulator` starts publishing location pings immediately (every 4s) — watch `docker logs -f tracklah-location-1` to see them flow through RabbitMQ, get republished to Redis, and land in Firestore.
 
