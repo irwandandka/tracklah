@@ -32,6 +32,7 @@ pipeline {
                 dir('services/driver-simulator') {
                     sh 'go build ./...'
                     sh 'go vet ./...'
+                    sh 'go test ./...'
                 }
                 dir('services/trip-events-consumer') {
                     sh 'go build ./...'

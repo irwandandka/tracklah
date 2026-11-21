@@ -91,9 +91,17 @@ services:
     restart: unless-stopped
     depends_on:
       - rabbitmq
+      - api
     environment:
-      DRIVER_ID: driver-99
+      # One process simulates every driver listed here. Each one roams
+      # while idle and picks up "requested" trips end to end.
+      DRIVER_IDS: driver-1,driver-2,driver-3
       RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
+      API_URL: http://api:3000
+      # Every ping becomes one Firestore write in `location`: 3 drivers
+      # at 4s is ~65k writes/day, above the Spark free tier (20k/day).
+      PING_INTERVAL: 4s
+      SPEED_MPS: "12"
 
   trip-events-consumer:
     build: ./services/trip-events-consumer

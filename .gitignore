@@ -27,3 +27,8 @@ coverage/
 
 # Personal notes, not for the repo
 documentation/
+
+# Go binaries from a local `go build` in a service dir
+services/location/location
+services/driver-simulator/driver-simulator
+services/trip-events-consumer/trip-events-consumer

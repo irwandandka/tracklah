@@ -12,7 +12,7 @@ The intended architecture splits backend responsibilities across three languages
 |---|---|---|---|
 | `services/api` | NestJS | Core REST API, trip lifecycle, Postgres, RabbitMQ/Redis producers | ✅ built |
 | `services/location` | Go | Location ping ingestion (RabbitMQ), Redis pub/sub, Firestore writes | ✅ built |
-| `services/driver-simulator` | Go | Fakes a driver: publishes location pings, consumes commands | ✅ built |
+| `services/driver-simulator` | Go | Fakes a fleet of drivers: roams, publishes location pings, picks up and drives requested trips, consumes commands | ✅ built |
 | `services/trip-events-consumer` | Go | Three independent consumers proving the fanout pattern | ✅ built |
 | `services/edge` | Rust (Cloudflare Workers/WASM) | Geofence validation, rate-limiting, edge ETA | 🔜 not started |
 
@@ -45,6 +45,8 @@ That covers direct HTTP requests. The other half of the system is message-driven
 driver-simulator ──[RabbitMQ: direct]──▶ api            (Case 1: commands, e.g. "cancel trip")
 driver-simulator ──[RabbitMQ: topic]───▶ location        (Case 2: location pings, wildcard-bound)
 api (trips.service) ──[RabbitMQ: fanout]▶ trip-events-consumer   (Case 3: lifecycle broadcast, 3 independent queues)
+api (trips.service) ──[RabbitMQ: fanout]▶ driver-simulator       (same fanout, 4th queue: picks up "requested" trips)
+driver-simulator ──[HTTP: PATCH /trips/:id/status]──▶ api        (assigned → in_progress → completed)
 location ──[Redis pub/sub]──▶ api (LocationUpdatesService)        (fire-and-forget, no persistence)
 location ──[Firestore]──▶ driverLocations/{driverId}               (durable "current position" snapshot)
 ```
@@ -131,7 +133,11 @@ Trip API rules worth knowing:
 - `PATCH /trips/:id/status` only allows `requested→assigned|cancelled`, `assigned→in_progress|cancelled`, `in_progress→completed`. Anything else is `409`. `driverId` is required when assigning and rejected otherwise. The update is a compare-and-set on the previous status, so a concurrent change also loses with `409` instead of being overwritten.
 - Malformed trip ids return `400`, not a Postgres `500`.
 
-`driver-simulator` starts publishing location pings immediately (every 4s) — watch `docker logs -f tracklah-location-1` to see them flow through RabbitMQ, get republished to Redis, and land in Firestore.
+`driver-simulator` runs every driver in `DRIVER_IDS` (`driver-1,driver-2,driver-3` by default) in one process. Each one roams in straight lines between random waypoints, pinging every `PING_INTERVAL` (4s) at `SPEED_MPS` (12 m/s). When you create a trip, the next idle driver takes it: `PATCH assigned` with its `driverId`, drives to the origin, `PATCH in_progress`, drives to the destination, `PATCH completed`. If the rider cancels while the driver is on the way, the driver drops the trip and goes back to roaming. Any `409` from the API (trip already taken or cancelled) just means "skip this one". Watch `docker logs -f tracklah-driver-simulator-1` for the trip side and `docker logs -f tracklah-location-1` to see pings flow through RabbitMQ, Redis and into Firestore.
+
+Known limitation: if the simulator restarts mid-trip, that trip stays `assigned`/`in_progress` (it isn't resumed). `assigned` can still be cancelled by the rider, but `in_progress` has to be finished by hand: `PATCH /trips/<id>/status` with `{"status":"completed"}`.
+
+Firestore cost: every ping is one Firestore write in `location`. Three drivers at 4s is about 65k writes/day, above the Spark plan's free 20k/day. Raise `PING_INTERVAL` or lower the driver count if that matters.
 
 Other useful dashboards:
 - Traefik (routers, discovered services): `http://localhost:8080`
