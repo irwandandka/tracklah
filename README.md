@@ -173,7 +173,7 @@ Full rationale and tool-by-tool notes live in the project brainstorm doc (not ch
 
 - **Phase 1 — Foundation** ✅ done: Docker Compose, Traefik, NestJS CRUD, Postgres, all wired end-to-end.
 - **Phase 2 — Real-time core** ✅ done: Go location ingestion, RabbitMQ (direct/topic/fanout — commands, location pings, trip lifecycle events), Redis pub/sub bridging Go → NestJS, Firestore last-known-location writes.
-- **Phase 3 — CI/CD** 🚧 in progress: Jenkins controller ✅, Build Agent ✅ (`services/jenkins-agent`, permanent inbound node — `location-build` actually compiles on the agent, not the controller). Still to do: Docker build/push to a registry, SSH deploy.
+- **Phase 3 — CI/CD** 🚧 in progress: Jenkins controller ✅, Build Agent ✅ (`services/jenkins-agent`, permanent inbound node — `location-build` actually compiles on the agent, not the controller). The root `Jenkinsfile` (run by the homelab `jenkins.lan`) lints, builds and tests every service, then on `main` builds and pushes all four images to GHCR as `ghcr.io/irwandandka/tracklah-<service>:<short-sha>` plus `:latest` (needs a `ghcr-credentials` username/password credential on `jenkins.lan`: GitHub username + classic PAT with `write:packages`). Still to do: SSH deploy.
 - **Phase 4 — Observability**: Prometheus/Grafana, OpenTelemetry tracing across services.
 - **Phase 5 — Storage & cloud**: MinIO, Cloudflare Tunnel + R2, AWS SES/S3, the Rust/WASM edge worker.
 - **Phase 6 — Advanced**: RabbitMQ DLQ + MQTT, Kafka (replacing RabbitMQ for location ingestion), Firebase Auth, Sentry.

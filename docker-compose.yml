@@ -127,9 +127,10 @@ services:
     environment:
       JENKINS_ADMIN_USER: ${JENKINS_ADMIN_USER}
       JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD}
+    # No docker.sock here: builds run on jenkins-agent, and access to the
+    # host's Docker socket is effectively root on the host.
     volumes:
       - jenkins-data:/var/jenkins_home
-      - /var/run/docker.sock:/var/run/docker.sock
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.jenkins.rule=Host(`jenkins.tracklah.localhost`)"
