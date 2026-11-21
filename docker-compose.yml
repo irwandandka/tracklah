@@ -42,6 +42,9 @@ services:
       DB_NAME: tracklah
       RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
       REDIS_ADDR: redis:6379
+      # A trip still "requested" after this long is cancelled as
+      # no_driver_found (checked once a minute).
+      TRIP_REQUEST_TIMEOUT_MINUTES: 30
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.api.rule=Host(`api.tracklah.localhost`)"
@@ -91,9 +94,24 @@ services:
     restart: unless-stopped
     depends_on:
       - rabbitmq
+      - api
     environment:
-      DRIVER_ID: driver-99
+      # One process simulates every driver listed here. Each one roams
+      # while idle and picks up "requested" trips end to end.
+      DRIVER_IDS: driver-1,driver-2,driver-3
       RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
+      API_URL: http://api:3000
+      # Every ping becomes one Firestore write in `location`. Pinging
+      # every 20s while waiting for an order and every 10s on a trip,
+      # with drivers online ~60% of the time, is roughly 10k writes/day
+      # for 3 drivers: inside the Spark free tier (20k/day).
+      IDLE_PING_INTERVAL: 20s
+      TRIP_PING_INTERVAL: 10s
+      SPEED_MPS: "12"
+      # Each driver alternates online/offline shifts (no pings while
+      # offline). ALWAYS_ONLINE: "true" turns this off for local testing.
+      ONLINE_DURATION: 20m-40m
+      OFFLINE_DURATION: 10m-30m
 
   trip-events-consumer:
     build: ./services/trip-events-consumer
@@ -109,9 +127,10 @@ services:
     environment:
       JENKINS_ADMIN_USER: ${JENKINS_ADMIN_USER}
       JENKINS_ADMIN_PASSWORD: ${JENKINS_ADMIN_PASSWORD}
+    # No docker.sock here: builds run on jenkins-agent, and access to the
+    # host's Docker socket is effectively root on the host.
     volumes:
       - jenkins-data:/var/jenkins_home
-      - /var/run/docker.sock:/var/run/docker.sock
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.jenkins.rule=Host(`jenkins.tracklah.localhost`)"
