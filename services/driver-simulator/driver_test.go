@@ -61,10 +61,10 @@ func newTestDriver(api tripAPI) (*driver, *[]Point) {
 			*pings = append(*pings, p)
 			return nil
 		},
-		interval:   time.Millisecond,
-		stepMeters: 500,
-		rng:        rand.New(rand.NewPCG(1, 2)),
-		active:     newActiveTrips(),
+		idle:   motion{time.Millisecond, 500},
+		onTrip: motion{time.Millisecond, 500},
+		rng:    rand.New(rand.NewPCG(1, 2)),
+		active: newActiveTrips(),
 	}, pings
 }
 
@@ -125,7 +125,7 @@ func TestHandleTripDropsTripWhenAssignIsRefused(t *testing.T) {
 func TestHandleTripStopsWhenRiderCancelsBeforePickup(t *testing.T) {
 	api := &fakeAPI{trip: requestedTrip()}
 	d, _ := newTestDriver(api)
-	d.stepMeters = 1 // slow enough that the cancel lands mid-drive
+	d.onTrip.stepMeters = 1 // slow enough that the cancel lands mid-drive
 	api.onStatus = func(status string) {
 		if status == "assigned" {
 			go func() {
@@ -178,5 +178,25 @@ func TestHandleEvent(t *testing.T) {
 	handleEvent(tripEvent{TripID: "c", Status: "cancelled"}, pending, active)
 	if !cancelled || context.Cause(ctx) != errCancelledByRider {
 		t.Fatal("cancelled event did not stop the active driver")
+	}
+}
+
+// Idle and on-trip legs use their own cadence: the trip must be driven
+// with onTrip's step, not idle's.
+func TestTripUsesOnTripMotion(t *testing.T) {
+	api := &fakeAPI{trip: requestedTrip()}
+	d, pings := newTestDriver(api)
+	d.idle = motion{time.Hour, 1} // would never finish the trip
+	d.onTrip = motion{time.Millisecond, 500}
+
+	done := make(chan struct{})
+	go func() { d.handleTrip(context.Background(), "trip-1"); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("trip was not driven with the on-trip motion")
+	}
+	if len(*pings) == 0 {
+		t.Fatal("no pings while on the trip")
 	}
 }

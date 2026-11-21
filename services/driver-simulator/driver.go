@@ -14,34 +14,109 @@ const idleRoamRadiusMeters = 1500.0
 type pingFunc func(driverID string, p Point) error
 
 type driver struct {
-	id         string
-	pos        Point
-	home       Point // idle roaming stays around here
-	api        tripAPI
-	ping       pingFunc
-	interval   time.Duration
-	stepMeters float64
-	rng        *rand.Rand
-	active     *activeTrips
+	id     string
+	pos    Point
+	home   Point // idle roaming stays around here
+	api    tripAPI
+	ping   pingFunc
+	idle   motion // waiting for an order
+	onTrip motion // heading to pickup or to the destination
+	rng    *rand.Rand
+	active *activeTrips
+	shifts shiftPlan
 }
 
-// run is the driver's whole life: roam while idle, and take the next
-// requested trip from `pending` whenever it's free. Because only idle
-// drivers read from `pending`, the Go channel itself does the dispatching.
+// motion is how often a driver pings and how far it moves between pings.
+// Waiting for an order pings less often than being on a trip: dispatch
+// only needs a rough position, while a rider watching their driver
+// approach wants a smoother marker.
+type motion struct {
+	interval   time.Duration
+	stepMeters float64
+}
+
+// durationRange is an inclusive [Min, Max] a random duration is drawn from.
+type durationRange struct {
+	Min, Max time.Duration
+}
+
+func (r durationRange) pick(rng *rand.Rand) time.Duration {
+	if r.Max <= r.Min {
+		return r.Min
+	}
+	return r.Min + time.Duration(rng.Int64N(int64(r.Max-r.Min)+1))
+}
+
+// shiftPlan makes a driver come and go like a real one: online for a
+// while (roaming, pinging, taking trips), then offline (no pings at all,
+// so the app's "updatedAt > now-30s" query drops them from the map).
+// The zero value means always online.
+type shiftPlan struct {
+	online  durationRange
+	offline durationRange
+}
+
+func (s shiftPlan) alwaysOnline() bool { return s.online.Max <= 0 }
+
+// run is the driver's whole life: alternate online and offline shifts.
 func (d *driver) run(ctx context.Context, pending <-chan string) {
-	ticker := time.NewTicker(d.interval)
+	for {
+		var shift time.Duration
+		if !d.shifts.alwaysOnline() {
+			shift = d.shifts.online.pick(d.rng)
+			log.Printf("[%s] online for %s", d.id, shift.Round(time.Second))
+		}
+		if !d.online(ctx, pending, shift) {
+			return
+		}
+
+		off := d.shifts.offline.pick(d.rng)
+		log.Printf("[%s] offline for %s", d.id, off.Round(time.Second))
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(off):
+		}
+	}
+}
+
+// online roams while idle and takes the next requested trip from
+// `pending` whenever it's free. Because only idle, online drivers read
+// from `pending`, the Go channel itself does the dispatching. It returns
+// true when the shift is over (never in the middle of a trip: a driver
+// whose shift ends during a trip finishes it first), false on shutdown.
+// shift <= 0 means the shift never ends.
+func (d *driver) online(ctx context.Context, pending <-chan string, shift time.Duration) bool {
+	ticker := time.NewTicker(d.idle.interval)
 	defer ticker.Stop()
+	var shiftOver <-chan time.Time
+	if shift > 0 {
+		t := time.NewTimer(shift)
+		defer t.Stop()
+		shiftOver = t.C
+	}
 	waypoint := randomPointNear(d.rng, d.home, idleRoamRadiusMeters)
+	d.sendPing() // show up on the map right away, not one interval later
 
 	for {
 		select {
 		case <-ctx.Done():
-			return
+			return false
+		case <-shiftOver:
+			return true
 		case tripID := <-pending:
 			d.handleTrip(ctx, tripID)
+			ticker.Reset(d.idle.interval)
+			// If the shift ended during the trip, log off now instead of
+			// letting select pick another pending trip at random.
+			select {
+			case <-shiftOver:
+				return true
+			default:
+			}
 		case <-ticker.C:
 			var arrived bool
-			d.pos, arrived = stepToward(d.pos, waypoint, d.stepMeters)
+			d.pos, arrived = stepToward(d.pos, waypoint, d.idle.stepMeters)
 			if arrived {
 				waypoint = randomPointNear(d.rng, d.home, idleRoamRadiusMeters)
 			}
@@ -113,7 +188,7 @@ func (d *driver) transition(ctx context.Context, tripID, status, driverID string
 // driveTo moves toward target one step per tick, pinging each time, until
 // it arrives or ctx is cancelled.
 func (d *driver) driveTo(ctx context.Context, target Point) error {
-	ticker := time.NewTicker(d.interval)
+	ticker := time.NewTicker(d.onTrip.interval)
 	defer ticker.Stop()
 	for {
 		select {
@@ -121,7 +196,7 @@ func (d *driver) driveTo(ctx context.Context, target Point) error {
 			return ctx.Err()
 		case <-ticker.C:
 			var arrived bool
-			d.pos, arrived = stepToward(d.pos, target, d.stepMeters)
+			d.pos, arrived = stepToward(d.pos, target, d.onTrip.stepMeters)
 			d.sendPing()
 			if arrived {
 				return nil

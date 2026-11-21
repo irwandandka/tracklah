@@ -30,11 +30,27 @@ var cityCenter = Point{Lat: -6.2000, Lng: 106.8000}
 const startRadiusMeters = 2000.0
 
 type config struct {
-	driverIDs    []string
-	rabbitURL    string
-	apiURL       string
-	pingInterval time.Duration
-	speedMPS     float64
+	driverIDs []string
+	rabbitURL string
+	apiURL    string
+	idlePing  time.Duration
+	tripPing  time.Duration
+	speedMPS  float64
+	shifts    shiftPlan
+}
+
+// parseDurationRange reads "20m-40m" (or a single "30m") into a range.
+func parseDurationRange(v string) (durationRange, error) {
+	lo, hi, found := strings.Cut(v, "-")
+	if !found {
+		hi = lo
+	}
+	min, err1 := time.ParseDuration(strings.TrimSpace(lo))
+	max, err2 := time.ParseDuration(strings.TrimSpace(hi))
+	if err1 != nil || err2 != nil || min <= 0 || max < min {
+		return durationRange{}, fmt.Errorf("invalid duration range %q, want e.g. 20m-40m", v)
+	}
+	return durationRange{Min: min, Max: max}, nil
 }
 
 func loadConfig() (config, error) {
@@ -60,13 +76,21 @@ func loadConfig() (config, error) {
 		return c, fmt.Errorf("missing required env var API_URL")
 	}
 
-	c.pingInterval = 10 * time.Second
-	if v := os.Getenv("PING_INTERVAL"); v != "" {
-		d, err := time.ParseDuration(v)
-		if err != nil || d <= 0 {
-			return c, fmt.Errorf("invalid PING_INTERVAL %q", v)
+	// Waiting for an order: 20s keeps a driver inside the app's
+	// "updatedAt > now-30s" online window with one ping of slack.
+	// On a trip: 10s, so the rider sees the driver move more smoothly.
+	c.idlePing, c.tripPing = 20*time.Second, 10*time.Second
+	for env, dst := range map[string]*time.Duration{
+		"IDLE_PING_INTERVAL": &c.idlePing,
+		"TRIP_PING_INTERVAL": &c.tripPing,
+	} {
+		if v := os.Getenv(env); v != "" {
+			d, err := time.ParseDuration(v)
+			if err != nil || d <= 0 {
+				return c, fmt.Errorf("invalid %s %q", env, v)
+			}
+			*dst = d
 		}
-		c.pingInterval = d
 	}
 
 	c.speedMPS = 12 // ~43 km/h, city traffic
@@ -76,6 +100,27 @@ func loadConfig() (config, error) {
 			return c, fmt.Errorf("invalid SPEED_MPS %q", v)
 		}
 		c.speedMPS = f
+	}
+
+	// Online/offline shifts. ALWAYS_ONLINE=true turns them off, which is
+	// handy when testing trips locally.
+	if os.Getenv("ALWAYS_ONLINE") != "true" {
+		c.shifts = shiftPlan{
+			online:  durationRange{20 * time.Minute, 40 * time.Minute},
+			offline: durationRange{10 * time.Minute, 30 * time.Minute},
+		}
+		for env, r := range map[string]*durationRange{
+			"ONLINE_DURATION":  &c.shifts.online,
+			"OFFLINE_DURATION": &c.shifts.offline,
+		} {
+			if v := os.Getenv(env); v != "" {
+				parsed, err := parseDurationRange(v)
+				if err != nil {
+					return c, fmt.Errorf("%s: %w", env, err)
+				}
+				*r = parsed
+			}
+		}
 	}
 	return c, nil
 }
@@ -197,7 +242,6 @@ func main() {
 	api := newHTTPTripAPI(cfg.apiURL)
 	pending := make(chan string, pendingBacklog)
 	active := newActiveTrips()
-	stepMeters := cfg.speedMPS * cfg.pingInterval.Seconds()
 
 	var wg sync.WaitGroup
 	for _, id := range cfg.driverIDs {
@@ -207,13 +251,15 @@ func main() {
 		d := &driver{
 			id: id, pos: start, home: start,
 			api: api, ping: pub.ping,
-			interval: cfg.pingInterval, stepMeters: stepMeters,
-			rng: rng, active: active,
+			idle:   motion{cfg.idlePing, cfg.speedMPS * cfg.idlePing.Seconds()},
+			onTrip: motion{cfg.tripPing, cfg.speedMPS * cfg.tripPing.Seconds()},
+			rng:    rng, active: active,
+			shifts: cfg.shifts,
 		}
 		wg.Add(2)
 		go func() { defer wg.Done(); d.run(ctx, pending) }()
 		go func() { defer wg.Done(); consumeCommands(ctx, conn, id) }()
-		log.Printf("[%s] online at %.5f,%.5f", id, start.Lat, start.Lng)
+		log.Printf("[%s] starting at %.5f,%.5f", id, start.Lat, start.Lng)
 	}
 
 	if err := consumeTripEvents(ctx, dispatchCh, pending, active); err != nil {

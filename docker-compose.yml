@@ -98,11 +98,17 @@ services:
       DRIVER_IDS: driver-1,driver-2,driver-3
       RABBITMQ_URL: amqp://tracklah:tracklah@rabbitmq:5672
       API_URL: http://api:3000
-      # Every ping becomes one Firestore write in `location`: 3 drivers
-      # at 10s is ~26k writes/day, still a bit above the Spark free tier
-      # (20k/day). 2 drivers at 10s (~17k/day) fits.
-      PING_INTERVAL: 10s
+      # Every ping becomes one Firestore write in `location`. Pinging
+      # every 20s while waiting for an order and every 10s on a trip,
+      # with drivers online ~60% of the time, is roughly 10k writes/day
+      # for 3 drivers: inside the Spark free tier (20k/day).
+      IDLE_PING_INTERVAL: 20s
+      TRIP_PING_INTERVAL: 10s
       SPEED_MPS: "12"
+      # Each driver alternates online/offline shifts (no pings while
+      # offline). ALWAYS_ONLINE: "true" turns this off for local testing.
+      ONLINE_DURATION: 20m-40m
+      OFFLINE_DURATION: 10m-30m
 
   trip-events-consumer:
     build: ./services/trip-events-consumer
