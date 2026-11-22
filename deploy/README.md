@@ -45,3 +45,17 @@ scp deploy/deploy.sh root@192.168.100.163:/opt/tracklah/deploy.sh
 ```
 
 `deploy/known_hosts` pins vm-4's SSH host key. If vm-4 is rebuilt, update it from `/etc/ssh/ssh_host_ed25519_key.pub` on the server.
+
+## Metrics (Phase 4)
+
+Every service serves Prometheus metrics on `:9464` in its container. `docker-compose.yml` publishes them on vm-4's LAN address only (not loopback, so the Cloudflare Tunnel can't reach them):
+
+| Port on vm-4 | Service | Highlights |
+|---|---|---|
+| 9464 | api | `tracklah_http_request_duration_seconds{method,route,status}`, `tracklah_trips_created_total`, `tracklah_trip_transitions_total{status,reason}`, Node.js process metrics |
+| 9465 | location | `tracklah_location_pings_consumed_total`, `tracklah_location_sink_errors_total{sink}`, `tracklah_location_firestore_write_seconds` |
+| 9466 | driver-simulator | `tracklah_sim_drivers_online`, `tracklah_sim_pending_trips`, `tracklah_sim_trips_total{outcome}`, `tracklah_sim_location_pings_total` |
+| 9467 | trip-events-consumer | `tracklah_trip_events_consumed_total{consumer,status}` |
+
+Prometheus on observability.lan scrapes them with the job in `observability/prometheus-scrape.yml` (append it to `/root/observability/prometheus/prometheus.yml`, then `docker compose restart prometheus` in `/root/observability`).
+The Grafana dashboard is `observability/grafana-tracklah-dashboard.json` (uid `tracklah`). Import it through Dashboards → New → Import, or POST it to `/api/dashboards/db`. Logs already reach Loki through promtail on vm-4 (`{host="vm-4", container=~"tracklah-.*"}`).

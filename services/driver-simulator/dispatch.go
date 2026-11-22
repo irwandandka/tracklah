@@ -67,6 +67,7 @@ func handleEvent(ev tripEvent, pending chan<- string, active *activeTrips) {
 		select {
 		case pending <- ev.TripID:
 		default:
+			dispatchDropped.Inc()
 			log.Printf("dispatch: backlog full, dropping trip %s", ev.TripID)
 		}
 	case "cancelled":

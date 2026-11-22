@@ -15,6 +15,7 @@ import { UpdateTripStatusDto } from './dto/update-trip-status.dto';
 import { ListTripsQueryDto } from './dto/list-trips-query.dto';
 import { TripEventsService } from './trip-events.service';
 import { CancelReason, TripStatus, canTransition } from './trip-status.enum';
+import { tripTransitions, tripsCreated } from '../metrics/metrics';
 
 const ACTIVE_TRIP_CONSTRAINT = 'UQ_trips_rider_active';
 const PG_UNIQUE_VIOLATION = '23505';
@@ -67,6 +68,7 @@ export class TripsService {
       }
       throw err;
     }
+    tripsCreated.inc();
     this.tripEvents.publish(saved);
     return saved;
   }
@@ -137,6 +139,10 @@ export class TripsService {
       );
     }
 
+    tripTransitions.inc({
+      status: to,
+      reason: to === TripStatus.CANCELLED ? CancelReason.RIDER_CANCELLED : '',
+    });
     const saved = await this.findOne(id);
     this.tripEvents.publish(saved);
     return saved;
@@ -172,6 +178,15 @@ export class TripsService {
     }
 
     const expired = (result.raw ?? []) as Trip[];
+    if (expired.length > 0) {
+      tripTransitions.inc(
+        {
+          status: TripStatus.CANCELLED,
+          reason: CancelReason.NO_DRIVER_FOUND,
+        },
+        expired.length,
+      );
+    }
     for (const trip of expired) {
       this.tripEvents.publish(trip);
     }

@@ -171,6 +171,7 @@ Note this still needs Postgres, RabbitMQ and Redis running (`docker compose up -
 - **Traefik's web entrypoint runs on host port `8000`, not `80`.** Same reason again — this machine has an nginx already on 80. `8080` (Traefik's dashboard) was free and left as-is.
 - **Traefik is pinned to `v3.7`.** `traefik:v3.5` and `v3.6` have a bug where the Docker provider hardcodes API version `1.24` when talking to the Docker daemon, which newer Docker Engines (this machine: Engine 29.x, `MinAPIVersion` 1.40) reject outright with an unhelpful `400 Bad Request` and no discovered routers. Fixed upstream in Traefik's `v3.7` line — don't downgrade the image without checking this first.
 - **The Firestore service account key is bind-mounted, never baked into the image.** `docker-compose.yml` mounts `${FIRESTORE_CREDENTIALS_PATH}` (from your local, gitignored `.env`) read-only into the `location` container. If `location` won't start, check that path is set and the file exists.
+- **Firestore rules live in `firestore.rules`.** The mobile app may only read `driverLocations`; every client write is denied, and anything else is closed. The backend writes with the Admin SDK, which ignores the rules. Deploy them with `firebase deploy --only firestore:rules` (`.firebaserc` points at `tracklah-51cf6`).
 
 ## 7. Roadmap
 

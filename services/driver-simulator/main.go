@@ -33,10 +33,12 @@ type config struct {
 	driverIDs []string
 	rabbitURL string
 	apiURL    string
-	idlePing  time.Duration
-	tripPing  time.Duration
-	speedMPS  float64
-	shifts    shiftPlan
+	// metricsAddr is where Prometheus scrapes /metrics (METRICS_ADDR).
+	metricsAddr string
+	idlePing    time.Duration
+	tripPing    time.Duration
+	speedMPS    float64
+	shifts      shiftPlan
 }
 
 // parseDurationRange reads "20m-40m" (or a single "30m") into a range.
@@ -74,6 +76,9 @@ func loadConfig() (config, error) {
 	}
 	if c.apiURL = strings.TrimRight(os.Getenv("API_URL"), "/"); c.apiURL == "" {
 		return c, fmt.Errorf("missing required env var API_URL")
+	}
+	if c.metricsAddr = os.Getenv("METRICS_ADDR"); c.metricsAddr == "" {
+		c.metricsAddr = ":9464"
 	}
 
 	// Waiting for an order: 20s keeps a driver inside the app's
@@ -242,6 +247,8 @@ func main() {
 	api := newHTTPTripAPI(cfg.apiURL)
 	pending := make(chan string, pendingBacklog)
 	active := newActiveTrips()
+	watchPending(pending)
+	serveMetrics(cfg.metricsAddr)
 
 	var wg sync.WaitGroup
 	for _, id := range cfg.driverIDs {

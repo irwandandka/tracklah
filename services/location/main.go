@@ -96,6 +96,7 @@ func consumeLocationEvents(ch *amqp.Channel, rdb *redis.Client, fs *firestore.Cl
 	for msg := range msgs {
 		var ping LocationPing
 		if err := json.Unmarshal(msg.Body, &ping); err != nil {
+			pingsConsumed.WithLabelValues("malformed").Inc()
 			log.Printf("location service: received malformed ping, discarding: %v", err)
 			msg.Nack(false, false)
 			continue
@@ -108,15 +109,19 @@ func consumeLocationEvents(ch *amqp.Channel, rdb *redis.Client, fs *firestore.Cl
 			// here just means "nobody heard this one" - it's not a reason
 			// to Nack the RabbitMQ message, since the ping was already
 			// handled successfully as far as RabbitMQ is concerned.
+			sinkErrors.WithLabelValues("redis").Inc()
 			log.Printf("location service: failed to publish to redis: %v", err)
 		}
 
+		start := time.Now()
 		_, err = fs.Collection("driverLocations").Doc(ping.DriverID).Set(ctx, map[string]any{
 			"lat":       ping.Lat,
 			"lng":       ping.Lng,
 			"updatedAt": time.Now().UTC(),
 		})
+		firestoreWrite.Observe(time.Since(start).Seconds())
 		if err != nil {
+			sinkErrors.WithLabelValues("firestore").Inc()
 			// Same reasoning as the Redis publish above: a Firestore write
 			// failure doesn't invalidate the fact that RabbitMQ already
 			// delivered this ping successfully.
@@ -124,6 +129,7 @@ func consumeLocationEvents(ch *amqp.Channel, rdb *redis.Client, fs *firestore.Cl
 		}
 
 		msg.Ack(false)
+		pingsConsumed.WithLabelValues("ok").Inc()
 	}
 }
 
@@ -174,6 +180,12 @@ func main() {
 		log.Fatalf("failed to create firestore client: %v", err)
 	}
 	defer fs.Close()
+
+	metricsAddr := os.Getenv("METRICS_ADDR")
+	if metricsAddr == "" {
+		metricsAddr = ":9464"
+	}
+	serveMetrics(metricsAddr)
 
 	go consumeLocationEvents(ch, rdb, fs)
 

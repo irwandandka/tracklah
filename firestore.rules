@@ -1,0 +1,19 @@
+rules_version = '2';
+
+// Clients (the mobile app) only ever read. Every write comes from the
+// backend through the Admin SDK, which bypasses these rules.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Live driver positions written by services/location:
+    // {lat, lng, updatedAt}. The app lists drivers seen in the last ~45s.
+    match /driverLocations/{driverId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // Anything else is closed until a feature needs it.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
