@@ -32,3 +32,6 @@ documentation/
 services/location/location
 services/driver-simulator/driver-simulator
 services/trip-events-consumer/trip-events-consumer
+
+# Firebase CLI
+firebase-debug.log
