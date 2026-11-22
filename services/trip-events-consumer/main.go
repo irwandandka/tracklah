@@ -53,6 +53,7 @@ func consumeAs(conn *amqp.Connection, label, queueName string) {
 	for msg := range msgs {
 		var event tripEvent
 		if err := json.Unmarshal(msg.Body, &event); err != nil {
+			tripEvents.WithLabelValues(label, "malformed").Inc()
 			log.Printf("[%s] received malformed event, discarding: %v", label, err)
 			msg.Nack(false, false)
 			continue
@@ -60,6 +61,7 @@ func consumeAs(conn *amqp.Connection, label, queueName string) {
 
 		log.Printf("[%s] trip=%s status=%s driverId=%s", label, event.TripID, event.Status, event.DriverID)
 		msg.Ack(false)
+		tripEvents.WithLabelValues(label, event.Status).Inc()
 	}
 }
 
@@ -74,6 +76,12 @@ func main() {
 		log.Fatalf("failed to connect to RabbitMQ: %v", err)
 	}
 	defer conn.Close()
+
+	metricsAddr := os.Getenv("METRICS_ADDR")
+	if metricsAddr == "" {
+		metricsAddr = ":9464"
+	}
+	serveMetrics(metricsAddr)
 
 	go consumeAs(conn, "analytics", "analytics-consumer")
 	go consumeAs(conn, "notification", "notification-consumer")

@@ -5,6 +5,7 @@ import { TripEventsService } from './trip-events.service';
 import { Trip } from './trip.entity';
 import { ConfigService } from '@nestjs/config';
 import { CancelReason, TripStatus } from './trip-status.enum';
+import { tripTransitions } from '../metrics/metrics';
 
 const TRIP_ID = '11111111-1111-4111-8111-111111111111';
 const RIDER_ID = '22222222-2222-4222-8222-222222222222';
@@ -193,8 +194,14 @@ describe('TripsService', () => {
       });
       const b = makeTrip({ ...a, id: 'b' });
       qb.execute.mockResolvedValue({ raw: [a, b] });
+      const expiredCount = async () =>
+        (await tripTransitions.get()).values.find(
+          (v) => v.labels.reason === CancelReason.NO_DRIVER_FOUND,
+        )?.value ?? 0;
+      const before = await expiredCount();
 
       await expect(service.expireStaleRequests()).resolves.toBe(2);
+      expect((await expiredCount()) - before).toBe(2);
       expect(qb.set).toHaveBeenCalledWith({
         status: TripStatus.CANCELLED,
         cancelReason: CancelReason.NO_DRIVER_FOUND,

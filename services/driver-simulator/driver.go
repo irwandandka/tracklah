@@ -95,6 +95,8 @@ func (d *driver) online(ctx context.Context, pending <-chan string, shift time.D
 		defer t.Stop()
 		shiftOver = t.C
 	}
+	driversOnline.Inc()
+	defer driversOnline.Dec()
 	waypoint := randomPointNear(d.rng, d.home, idleRoamRadiusMeters)
 	d.sendPing() // show up on the map right away, not one interval later
 
@@ -142,6 +144,9 @@ func (d *driver) handleTrip(ctx context.Context, tripID string) {
 	if !d.transition(ctx, tripID, "assigned", d.id) {
 		return
 	}
+	// From here on the trip is this driver's, so count how it ends.
+	outcome := "error"
+	defer func() { tripOutcomes.WithLabelValues(outcome).Inc() }()
 	log.Printf("[%s] trip %s: assigned, heading to pickup", d.id, tripID)
 
 	// The rider may cancel while the driver is on the way: the dispatcher
@@ -154,10 +159,14 @@ func (d *driver) handleTrip(ctx context.Context, tripID string) {
 	}()
 
 	if err := d.driveTo(tripCtx, t.origin()); err != nil {
+		if ctx.Err() == nil {
+			outcome = "cancelled" // the rider cancelled, not a shutdown
+		}
 		log.Printf("[%s] trip %s: stopped before pickup (%v)", d.id, tripID, context.Cause(tripCtx))
 		return
 	}
 	if !d.transition(ctx, tripID, "in_progress", "") {
+		outcome = "conflict"
 		return
 	}
 	log.Printf("[%s] trip %s: picked up rider", d.id, tripID)
@@ -168,6 +177,7 @@ func (d *driver) handleTrip(ctx context.Context, tripID string) {
 		return
 	}
 	if d.transition(ctx, tripID, "completed", "") {
+		outcome = "completed"
 		log.Printf("[%s] trip %s: completed", d.id, tripID)
 	}
 }
@@ -207,6 +217,9 @@ func (d *driver) driveTo(ctx context.Context, target Point) error {
 
 func (d *driver) sendPing() {
 	if err := d.ping(d.id, d.pos); err != nil {
+		pingsPublished.WithLabelValues("error").Inc()
 		log.Printf("[%s] failed to publish location ping: %v", d.id, err)
+		return
 	}
+	pingsPublished.WithLabelValues("ok").Inc()
 }

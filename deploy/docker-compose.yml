@@ -5,6 +5,11 @@
 # Postgres, Redis and RabbitMQ are NOT here: they're the homelab's shared
 # infra LXCs (postgres.lan, redis.lan, messaging.lan). Secrets come from
 # /opt/tracklah/.env (mode 600, never committed); the image tag from .tag.
+#
+# Every service serves Prometheus metrics on :9464 inside its container.
+# They're published on vm-4's LAN address only (ports 9464-9467), for
+# prometheus on observability.lan to scrape. Not on loopback, so the
+# tunnel can't reach them, and not on 0.0.0.0, so not on other interfaces.
 name: tracklah
 
 x-hardening: &hardening
@@ -24,7 +29,9 @@ services:
     # Loopback only: the outside world reaches the API through Cloudflare
     # Tunnel (cloudflared on this host), never directly. That's also what
     # makes trusting CF-Connecting-IP for rate limiting safe.
-    ports: ["127.0.0.1:3300:3000"]
+    ports:
+      - "127.0.0.1:3300:3000"
+      - "${METRICS_BIND_IP:-192.168.100.163}:9464:9464"
     environment:
       NODE_ENV: production
       PORT: 3000
@@ -39,6 +46,7 @@ services:
       TRIP_REQUEST_TIMEOUT_MINUTES: 30
       TRUST_CF_CONNECTING_IP: "true"
       THROTTLE_LIMIT_PER_MINUTE: 120
+      METRICS_PORT: 9464
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3000/health"]
       interval: 15s
@@ -49,8 +57,10 @@ services:
   location:
     <<: *hardening
     image: ghcr.io/irwandandka/tracklah-location:${TRACKLAH_TAG:?}
+    ports: ["${METRICS_BIND_IP:-192.168.100.163}:9465:9464"]
     environment:
       PORT: 8080
+      METRICS_ADDR: ":9464"
       RABBITMQ_URL: ${RABBITMQ_URL:?}
       REDIS_ADDR: ${REDIS_ADDR:?}
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -67,6 +77,7 @@ services:
   driver-simulator:
     <<: *hardening
     image: ghcr.io/irwandandka/tracklah-driver-simulator:${TRACKLAH_TAG:?}
+    ports: ["${METRICS_BIND_IP:-192.168.100.163}:9466:9464"]
     depends_on:
       api: { condition: service_healthy }
     environment:
@@ -78,9 +89,12 @@ services:
       SPEED_MPS: "12"
       ONLINE_DURATION: 20m-40m
       OFFLINE_DURATION: 10m-30m
+      METRICS_ADDR: ":9464"
 
   trip-events-consumer:
     <<: *hardening
     image: ghcr.io/irwandandka/tracklah-trip-events-consumer:${TRACKLAH_TAG:?}
+    ports: ["${METRICS_BIND_IP:-192.168.100.163}:9467:9464"]
     environment:
       RABBITMQ_URL: ${RABBITMQ_URL:?}
+      METRICS_ADDR: ":9464"

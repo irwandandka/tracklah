@@ -1,0 +1,14 @@
+# TrackLah scrape jobs. Append these under scrape_configs in
+# /root/observability/prometheus/prometheus.yml on observability.lan, then
+# restart prometheus (see deploy/README.md). The ports are the ones
+# deploy/docker-compose.yml publishes on vm-4's LAN address.
+  - job_name: tracklah
+    static_configs:
+      - targets: ['vm-4.lan:9464']
+        labels: { tier: app, service: api }
+      - targets: ['vm-4.lan:9465']
+        labels: { tier: app, service: location }
+      - targets: ['vm-4.lan:9466']
+        labels: { tier: app, service: driver-simulator }
+      - targets: ['vm-4.lan:9467']
+        labels: { tier: app, service: trip-events-consumer }
