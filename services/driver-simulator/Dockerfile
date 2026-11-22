@@ -8,4 +8,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o driver-simulator .
 FROM alpine:3.20 AS production
 WORKDIR /app
 COPY --from=build /app/driver-simulator .
+# Run as an unprivileged user, not root.
+RUN adduser -D -H -u 10001 app
+USER 10001
 CMD ["./driver-simulator"]

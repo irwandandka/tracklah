@@ -11,5 +11,7 @@ ENV NODE_ENV=production
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
+# The node image ships an unprivileged "node" user; don't run as root.
+USER node
 EXPOSE 3000
 CMD ["node", "dist/main"]

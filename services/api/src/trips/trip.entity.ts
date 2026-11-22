@@ -22,8 +22,7 @@ export class Trip {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  // varchar, not uuid: changing the column type under synchronize: true
-  // would drop and re-add it. The UUID format is enforced in the DTO.
+  // The UUID format is enforced in the DTO.
   @Column()
   riderId: string;
 
@@ -49,9 +48,11 @@ export class Trip {
   @Column('double precision')
   destinationLng: number;
 
-  @CreateDateColumn()
+  // timestamptz, so the instant is stored unambiguously no matter which
+  // time zone the API or Postgres runs in.
+  @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 
-  @UpdateDateColumn()
+  @UpdateDateColumn({ type: 'timestamptz' })
   updatedAt: Date;
 }

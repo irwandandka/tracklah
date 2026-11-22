@@ -2,13 +2,17 @@
 // the whole polyglot repo. Not to be confused with services/location/Jenkinsfile,
 // which targets tracklah's own (unused) embedded Jenkins - left untouched.
 //
-// Needs on jenkins.lan: a "Username with password" credential with id
-// "ghcr-credentials" (GitHub username + classic PAT with write:packages).
+// Needs on jenkins.lan:
+// - "ghcr-credentials": Username with password (GitHub username + classic
+//   PAT with write:packages).
+// - "tracklah-deploy-key": SSH Username with private key for deploy@vm-4.
+//   On vm-4 that key is locked to /opt/tracklah/deploy.sh (see deploy/).
 pipeline {
     agent any
     environment {
         REGISTRY = 'ghcr.io'
         IMAGE_PREFIX = 'ghcr.io/irwandandka/tracklah'
+        DEPLOY_HOST = 'deploy@192.168.100.163'
     }
     stages {
         stage('api (NestJS)') {
@@ -72,6 +76,30 @@ pipeline {
                             img.push('latest')
                         }
                     }
+                }
+            }
+        }
+        // Deploys the images just pushed to vm-4. The deploy key can only
+        // run deploy.sh there (forced command), which pulls the given tag,
+        // waits for health checks, and rolls back if they fail. The host
+        // key is pinned in deploy/known_hosts.
+        stage('Deploy to vm-4') {
+            when {
+                expression {
+                    def branch = env.BRANCH_NAME ?: env.GIT_BRANCH ?: ''
+                    return branch.replaceFirst('^origin/', '') == 'main'
+                }
+            }
+            steps {
+                script {
+                    env.RELEASE_TAG = env.GIT_COMMIT.substring(0, 7)
+                }
+                withCredentials([sshUserPrivateKey(credentialsId: 'tracklah-deploy-key', keyFileVariable: 'DEPLOY_KEY')]) {
+                    sh '''
+                        ssh -i "$DEPLOY_KEY" -o IdentitiesOnly=yes \
+                            -o StrictHostKeyChecking=yes -o UserKnownHostsFile=deploy/known_hosts \
+                            "$DEPLOY_HOST" "$RELEASE_TAG" < deploy/docker-compose.yml
+                    '''
                 }
             }
         }

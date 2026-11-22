@@ -8,6 +8,7 @@ import {
   Post,
   Query,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { TripsService } from './trips.service';
 import { CreateTripDto } from './dto/create-trip.dto';
 import { UpdateTripStatusDto } from './dto/update-trip-status.dto';
@@ -17,6 +18,9 @@ import { ListTripsQueryDto } from './dto/list-trips-query.dto';
 export class TripsController {
   constructor(private readonly tripsService: TripsService) {}
 
+  // Creating trips is the expensive, abusable call: much tighter than the
+  // global per-minute limit.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post()
   create(@Body() dto: CreateTripDto) {
     return this.tripsService.create(dto);
